@@ -21,6 +21,8 @@ from transformers import (
 )
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from pathlib import Path
+import docx
 
 # -------------------------------------------------------------------
 # APP SETUP
@@ -75,6 +77,93 @@ def normalize_answer(text: str) -> str:
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md"]
+
+
+# ===============================
+# DOCUMENT LOADERS
+# ===============================
+def load_pdf(file_path: str) -> list[Document]:
+    """Load a PDF file using PyPDFLoader."""
+    loader = PyPDFLoader(file_path)
+    return loader.load()
+
+
+def _extract_full_text_from_docx(doc) -> str:
+    """Extract text from paragraphs, tables, headers, and footers in a DOCX file."""
+    texts: list[str] = []
+
+    def add_paragraphs(paragraphs):
+        for para in paragraphs:
+            text = para.text.strip()
+            if text:
+                texts.append(text)
+
+    def add_table(table):
+        for row in table.rows:
+            for cell in row.cells:
+                add_paragraphs(cell.paragraphs)
+                for inner_table in cell.tables:
+                    add_table(inner_table)
+
+    # Body paragraphs and tables
+    add_paragraphs(doc.paragraphs)
+    for table in doc.tables:
+        add_table(table)
+
+    # Headers and footers
+    for section in doc.sections:
+        header = section.header
+        footer = section.footer
+        if header is not None:
+            add_paragraphs(header.paragraphs)
+            for table in header.tables:
+                add_table(table)
+        if footer is not None:
+            add_paragraphs(footer.paragraphs)
+            for table in footer.tables:
+                add_table(table)
+
+    return "\n".join(texts)
+
+
+def load_docx(file_path: str) -> list[Document]:
+    """Load a DOCX file using python-docx (extracts paragraphs, tables, headers, footers)."""
+    doc = docx.Document(file_path)
+    full_text = _extract_full_text_from_docx(doc)
+    if not full_text.strip():
+        return []
+    return [Document(page_content=full_text, metadata={"source": file_path})]
+
+
+def load_txt(file_path: str) -> list[Document]:
+    """Load a plain text file."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    if not content.strip():
+        return []
+    return [Document(page_content=content, metadata={"source": file_path})]
+
+
+def load_md(file_path: str) -> list[Document]:
+    """Load a Markdown file (treated as plain text for RAG)."""
+    return load_txt(file_path)
+
+
+def load_document(file_path: str) -> list[Document]:
+    """Route to the appropriate loader based on file extension."""
+    ext = Path(file_path).suffix.lower()
+    if ext == ".pdf":
+        return load_pdf(file_path)
+    elif ext == ".docx":
+        return load_docx(file_path)
+    elif ext in (".txt", ".md"):
+        return load_txt(file_path)
+    else:
+        raise ValueError(f"Unsupported file format: {ext}. Supported: {SUPPORTED_EXTENSIONS}")
+
 
 # -------------------------------------------------------------------
 # MODEL LOADING
@@ -172,7 +261,8 @@ def generate_response(prompt: str, max_new_tokens: int) -> str:
 # -------------------------------------------------------------------
 # REQUEST MODELS
 # -------------------------------------------------------------------
-class PDFPath(BaseModel):
+
+class DocumentPath(BaseModel):
     filePath: str
     session_id: str
 
@@ -209,14 +299,20 @@ def cleanup_expired_sessions():
 # -------------------------------------------------------------------
 @app.post("/process-pdf")
 @limiter.limit("15/15 minutes")
-def process_pdf(request: Request, data: PDFPath):
+def process_pdf(request: Request, data: DocumentPath):
     cleanup_expired_sessions()
 
     if not os.path.exists(data.filePath):
-        raise HTTPException(status_code=404, detail="PDF not found")
+        raise HTTPException(status_code=404, detail="Document not found")
 
-    loader = PyPDFLoader(data.filePath)
-    raw_docs = loader.load()
+    ext = Path(data.filePath).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file format: {ext}. Supported: {', '.join(SUPPORTED_EXTENSIONS)}")
+
+    try:
+        raw_docs = load_document(data.filePath)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load document: {str(e)}")
 
     cleaned_docs = [
         Document(
@@ -230,7 +326,7 @@ def process_pdf(request: Request, data: PDFPath):
     chunks = splitter.split_documents(cleaned_docs)
 
     if not chunks:
-        raise HTTPException(status_code=400, detail="No text extracted from PDF")
+        raise HTTPException(status_code=400, detail="No text extracted from the document. Please check your file.")
 
     sessions[data.session_id] = {
         "vectorstore": FAISS.from_documents(chunks, embedding_model),
@@ -259,7 +355,7 @@ def ask_question(request: Request, data: AskRequest):
     context = "\n\n".join(doc.page_content for doc in docs)
 
     prompt = (
-        "You are a helpful assistant answering ONLY from the context below.\n\n"
+        "You are a helpful assistant answering ONLY from the document context below.\n\n"
         f"Context:\n{context}\n\n"
         f"Question: {data.question}\nAnswer:"
     )

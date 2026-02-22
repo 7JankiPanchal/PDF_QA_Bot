@@ -67,7 +67,8 @@ axiosRetry(axios, {
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  message: "Too many PDF uploads, try again later",
+  message:
+    "Too many document uploads from this IP, please try again after 15 minutes",
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -97,9 +98,34 @@ const compareLimiter = rateLimit({
 });
 
 // ------------------------------------------------------------------
-// MULTER CONFIG
+// MULTER CONFIG (multi-format document storage)
 // ------------------------------------------------------------------
-const upload = multer({ dest: "uploads/" });
+const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md"];
+
+const storage = multer.diskStorage({
+  destination: "uploads/",
+  filename: (req, file, cb) => {
+    // Sanitize and preserve original extension so the Python service can detect format
+    const safeName = path.basename(file.originalname);
+    const ext = path.extname(safeName).toLowerCase();
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const safeName = path.basename(file.originalname);
+    const ext = path.extname(safeName).toLowerCase();
+    if (SUPPORTED_EXTENSIONS.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported file type. Allowed: ${SUPPORTED_EXTENSIONS.join(", ")}`));
+    }
+  }
+});
 
 // ------------------------------------------------------------------
 // ROUTE: UPLOAD PDF

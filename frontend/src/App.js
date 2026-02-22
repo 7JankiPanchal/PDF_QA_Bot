@@ -68,10 +68,10 @@ function App() {
     document.body.classList.toggle("dark-mode", darkMode);
   }, [darkMode]);
 
-  // -------------------------------
-  // Upload PDF
-  // -------------------------------
-  const uploadPDF = async () => {
+  // ===============================
+  // Upload
+  // ===============================
+  const uploadDocument = async () => {
     if (!file) return;
 
     setUploading(true);
@@ -83,14 +83,18 @@ function App() {
     try {
       const res = await axios.post(`${API_BASE}/upload`, formData);
       const url = URL.createObjectURL(file);
-
+      const dotIndex = file.name.lastIndexOf(".");
+      const ext =
+        dotIndex !== -1 && dotIndex < file.name.length - 1
+          ? file.name.substring(dotIndex + 1).toLowerCase()
+          : "";
       setPdfs((prev) => [
         ...prev,
-        { name: file.name, doc_id: res.data?.doc_id, url },
+        { name: file.name, doc_id: res.data?.doc_id, url, ext },
       ]);
 
       setFile(null);
-      alert("PDF uploaded!");
+      alert("Document uploaded!");
     } catch {
       alert("Upload failed.");
     }
@@ -206,16 +210,44 @@ function App() {
   // Render
   // -------------------------------
   return (
-    <div className={pageBg} style={{ minHeight: "100vh" }}>
-      <Navbar bg={darkMode ? "dark" : "primary"} variant="dark">
-        <Container className="d-flex justify-content-between">
-          <Navbar.Brand>🤖 PDF Q&A Bot</Navbar.Brand>
-          <Button
-            variant="outline-light"
-            onClick={() => setDarkMode(!darkMode)}
-          >
-            {darkMode ? "Light" : "Dark"}
-          </Button>
+    <div
+      className={pageBg}
+      style={{
+        minHeight: "100vh",
+        "--bs-card-bg": darkMode ? "#2c2c2c" : "#ffffff",
+        "--bs-body-bg": darkMode ? "#1e1e1e" : "#f8f9fa",
+      }}
+    >
+      {/* Navbar */}
+      <Navbar
+        bg={darkMode ? "dark" : "primary"}
+        variant="dark"
+        className="shadow mb-4 bg-gradient"
+      >
+        <Container className="d-flex justify-content-between align-items-center">
+          <Navbar.Brand className="fw-bold d-flex align-items-center gap-2">
+            <span role="img" aria-label="Bot">
+              🤖
+            </span>
+            Document Q&A Bot
+          </Navbar.Brand>
+          <div className="d-flex align-items-center gap-2">
+            <span className="text-white small">
+              {darkMode ? "⭐ Dark" : "🔆 Light"}
+            </span>
+            <div className="form-check form-switch mb-0">
+              <input
+                className="form-check-input"
+                type="checkbox"
+                role="switch"
+                id="darkModeToggle"
+                checked={darkMode}
+                onChange={() => setDarkMode(!darkMode)}
+                aria-label="Toggle dark/light mode"
+                style={{ cursor: "pointer", width: "40px", height: "22px" }}
+              />
+            </div>
+          </div>
         </Container>
       </Navbar>
 
@@ -227,14 +259,19 @@ function App() {
               <Form.Control
                 type="file"
                 className={inputClass}
+                accept=".pdf,.docx,.txt,.md"
                 onChange={(e) => setFile(e.target.files[0])}
               />
               <Button
                 className="mt-2"
-                onClick={uploadPDF}
+                onClick={uploadDocument}
                 disabled={!file || uploading}
               >
-                {uploading ? <Spinner size="sm" /> : "Upload"}
+                {uploading ? (
+                  <Spinner size="sm" animation="border" />
+                ) : (
+                  "Upload Document"
+                )}
               </Button>
             </Form>
           </Card.Body>
