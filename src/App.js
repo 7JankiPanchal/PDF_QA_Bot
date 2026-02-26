@@ -23,8 +23,13 @@ function App() {
   const [file, setFile] = useState(null);
   const [question, setQuestion] = useState("");
   const [chat, setChat] = useState(() => {
-    const saved = localStorage.getItem(CHAT_HISTORY_KEY);
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error("Error parsing chat history from localStorage:", e);
+      return [];
+    }
   });
   const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -122,7 +127,7 @@ function App() {
 
     try {
       await axios.post("http://localhost:4000/clear-history");
-    } catch {}
+    } catch { }
 
     setChat([]);
     localStorage.removeItem(CHAT_HISTORY_KEY);
@@ -132,12 +137,16 @@ function App() {
     <Container maxWidth="sm">
       <AppBar position="static" color="primary" sx={{ mb: 2 }}>
         <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            PDF Q&A Bot
-          </Typography>
-          <Avatar sx={{ bgcolor: "white", color: "primary.main" }}>
-            📄
-          </Avatar>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>PDF Q&A Bot</Typography>
+          <Button
+            color="inherit"
+            onClick={clearHistory}
+            disabled={chat.length === 0}
+            sx={{ mr: 2 }}
+          >
+            Clear History
+          </Button>
+          <Avatar sx={{ bgcolor: "white", color: "primary.main" }}>📄</Avatar>
         </Toolbar>
       </AppBar>
 
@@ -184,29 +193,9 @@ function App() {
       </Paper>
 
       {/* Chat Section */}
-      <Paper
-        elevation={3}
-        sx={{ p: 3, mb: 2, minHeight: 300, display: "flex", flexDirection: "column" }}
-      >
-        <Box
-          display="flex"
-          justifyContent="space-between"
-          alignItems="center"
-          mb={2}
-        >
-          <Typography variant="subtitle1">
-            Conversation History
-          </Typography>
-
-          <Button
-            variant="outlined"
-            size="small"
-            color="error"
-            onClick={clearHistory}
-            disabled={chat.length === 0}
-          >
-            Clear History
-          </Button>
+      <Paper elevation={3} sx={{ p: 3, mb: 2, minHeight: 300, display: 'flex', flexDirection: 'column' }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="subtitle1">Conversation History</Typography>
         </Box>
 
         <Box
