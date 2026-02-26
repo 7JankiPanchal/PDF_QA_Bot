@@ -28,6 +28,9 @@ def test_session_vectorstores_are_isolated(client, test_pdf_file):
     # Their stored document objects should be distinct objects (no shared references)
     docs1 = vs1.similarity_search("anything", k=10)
     docs2 = vs2.similarity_search("anything", k=10)
+    # Guard against false positives: both searches must return some results
+    assert docs1, "Expected non-empty search results for first session"
+    assert docs2, "Expected non-empty search results for second session"
     ids1 = {id(d) for d in docs1}
     ids2 = {id(d) for d in docs2}
     assert ids1.isdisjoint(ids2)
