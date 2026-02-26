@@ -17,6 +17,9 @@ import time
 import uuid
 import torch
 import uvicorn
+import pdf2image
+import pytesseract
+from PIL import Image
 
 # IMPORTANT: Authentication REMOVED as per issue requirement
 # (Authentication was breaking existing endpoints)
@@ -158,11 +161,32 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         loader = PyPDFLoader(file_path)
         docs = loader.load()
 
+        # Check if the PDF has extractable text
+        total_text_length = sum(len(doc.page_content.strip()) for doc in docs)
+        
+        if total_text_length < 50:
+            # Fallback to OCR if text length is very low (likely a scanned PDF)
+            print("Low text content detected. Falling back to OCR...")
+            images = pdf2image.convert_from_path(file_path)
+            ocr_docs = []
+            for i, image in enumerate(images):
+                # Extract text using Tesseract
+                ocr_text = pytesseract.image_to_string(image)
+                # Create a Langchain Document
+                ocr_docs.append(Document(
+                    page_content=ocr_text,
+                    metadata={"source": file_path, "page": i}
+                ))
+            docs = ocr_docs
+
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=100
         )
         chunks = splitter.split_documents(docs)
+
+        if not chunks:
+            return {"error": "Upload failed: No extractable text found in the document (OCR yielded nothing)."}
 
         vectorstore = FAISS.from_documents(chunks, embedding_model)
 
