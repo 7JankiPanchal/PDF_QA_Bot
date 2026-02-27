@@ -1,399 +1,201 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import ReactMarkdown from "react-markdown";
-import { Document, Page, pdfjs } from "react-pdf";
-import "bootstrap/dist/css/bootstrap.min.css";
-import {
-  Container,
-  Button,
-  Form,
-  Card,
-  Spinner,
-  Navbar,
-  Row,
-  Col,
-} from "react-bootstrap";
+import { Container, Typography, Box, Button, TextField, Paper, Avatar, CircularProgress, AppBar, Toolbar, IconButton } from "@mui/material";
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import SendIcon from '@mui/icons-material/Send';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url
-).toString();
-
-const API_BASE = process.env.REACT_APP_API_URL || "";
-const THEME_STORAGE_KEY = "pdf-qa-bot-theme";
+const CHAT_HISTORY_KEY = "pdf_bot_chat_history";
+const SESSION_ID_KEY = "pdf_bot_session_id";
 
 function App() {
-  // -------------------------------
-  // Core state
-  // -------------------------------
   const [file, setFile] = useState(null);
-  const [pdfs, setPdfs] = useState([]); // { name, doc_id, url }
-  const [selectedDocs, setSelectedDocs] = useState([]);
   const [question, setQuestion] = useState("");
-  const [chatHistory, setChatHistory] = useState([]);
-  const [comparisonResult, setComparisonResult] = useState(null);
-
-  // -------------------------------
-  // UI state
-  // -------------------------------
+  const [chat, setChat] = useState(() => {
+    try {
+      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error("Error parsing chat history from localStorage:", e);
+      return [];
+    }
+  });
   const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
-  const [summarizing, setSummarizing] = useState(false);
-  const [comparing, setComparing] = useState(false);
-
-  // -------------------------------
-  // Theme persistence
-  // -------------------------------
-  const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : false;
+  const [sessionId, setSessionId] = useState(() => {
+    return localStorage.getItem(SESSION_ID_KEY) || "";
   });
 
-  // -------------------------------
-  // Session isolation
-  // -------------------------------
-  const [sessionId, setSessionId] = useState("");
-
+  // Initialize Session ID on mount if it doesn't exist
   useEffect(() => {
-    setSessionId(
-      crypto.randomUUID
-        ? crypto.randomUUID()
-        : Math.random().toString(36).substring(2, 15)
-    );
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(darkMode));
-    document.body.classList.toggle("dark-mode", darkMode);
-  }, [darkMode]);
-
-  // ===============================
-  // Upload
-  // ===============================
-  const uploadDocument = async () => {
-    if (!file) return;
-
-    setUploading(true);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90_000);
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("sessionId", sessionId);
-
-      const res = await axios.post(`${API_BASE}/upload`, formData, {
-        signal: controller.signal,
-      });
-
-      const url = URL.createObjectURL(file);
-      const dotIndex = file.name.lastIndexOf(".");
-      const ext =
-        dotIndex !== -1 && dotIndex < file.name.length - 1
-          ? file.name.substring(dotIndex + 1).toLowerCase()
-          : "";
-
-      setPdfs((prev) => [
-        ...prev,
-        { name: file.name, doc_id: res.data?.doc_id, url, ext },
-      ]);
-
-      setFile(null);
-      alert("Document uploaded!");
-    } catch (e) {
-      if (e.name === "AbortError" || e.code === "ECONNABORTED") {
-        alert("Upload timed out. Try a smaller document.");
-      } else {
-        alert("Upload failed.");
-      }
-    } finally {
-      clearTimeout(timeoutId);
-      setUploading(false);
+    if (!sessionId) {
+      const newId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setSessionId(newId);
+      localStorage.setItem(SESSION_ID_KEY, newId);
     }
-  };
+  }, [sessionId]);
 
-  // -------------------------------
-  // Toggle document selection
-  // -------------------------------
-  const toggleDocSelection = (docId) => {
-    setComparisonResult(null);
-    setSelectedDocs((prev) =>
-      prev.includes(docId)
-        ? prev.filter((id) => id !== docId)
-        : [...prev, docId]
-    );
-  };
+  // Persist chat whenever it changes
+  useEffect(() => {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chat));
+  }, [chat]);
 
-  // -------------------------------
-  // Ask question (with timeout)
-  // -------------------------------
-  const askQuestion = async () => {
-    if (!question.trim() || selectedDocs.length === 0) return;
-    if (question.length > 2000) {
-      alert("Question too long (max 2000 characters)");
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files && event.target.files[0];
+    if (!selectedFile) {
+      setFile(null);
       return;
     }
 
-    setAsking(true);
-    setChatHistory((prev) => [...prev, { role: "user", text: question }]);
-    setQuestion("");
+    const name = selectedFile.name.toLowerCase();
+    const isAllowed = name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".txt") || name.endsWith(".md");
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    if (!isAllowed) {
+      alert("Only PDF, DOCX, TXT, and MD files are supported.");
+      event.target.value = "";
+      setFile(null);
+      return;
+    }
+
+    setFile(selectedFile);
+  };
+
+  const uploadPDF = async () => {
+    if (!file || !sessionId) return;
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("sessionId", sessionId);
 
     try {
-      const res = await axios.post(
-        `${API_BASE}/ask`,
-        {
-          question,
-          sessionId,
-          doc_ids: selectedDocs,
-        },
-        { signal: controller.signal }
-      );
-
-      setChatHistory((prev) => [
-        ...prev,
-        { role: "bot", text: res.data.answer, confidence: res.data.confidence_score },
-      ]);
+      await axios.post("http://localhost:4000/upload", formData);
+      alert("PDF uploaded successfully!");
     } catch (e) {
-      const msg =
-        e.name === "AbortError" || e.code === "ECONNABORTED"
-          ? "Request timed out."
-          : "Error getting answer.";
-      setChatHistory((prev) => [...prev, { role: "bot", text: msg }]);
-    } finally {
-      clearTimeout(timeoutId);
-      setAsking(false);
+      console.error(e);
+      alert("Upload failed. Ensure the server and RAG service are running.");
     }
+    setUploading(false);
   };
 
-  // -------------------------------
-  // Summarize PDFs
-  // -------------------------------
-  const summarizePDF = async () => {
-    if (selectedDocs.length === 0) return;
+  const askQuestion = async () => {
+    if (!question.trim() || !sessionId) return;
+    setAsking(true);
+    const userMsg = { role: "user", text: question };
+    setChat(prev => [...prev, userMsg]);
 
-    setSummarizing(true);
     try {
-      const res = await axios.post(`${API_BASE}/summarize`, {
-        sessionId,
-        doc_ids: selectedDocs,
+      const res = await axios.post("http://localhost:4000/ask", {
+        question: question.trim(),
+        sessionId: sessionId
       });
-      setChatHistory((prev) => [
-        ...prev,
-        { role: "bot", text: res.data.summary },
-      ]);
-    } catch {
-      alert("Error summarizing.");
-    } finally {
-      setSummarizing(false);
+      setChat(prev => [...prev, { role: "bot", text: res.data.answer }]);
+    } catch (e) {
+      setChat(prev => [...prev, { role: "bot", text: "Error getting answer. Please check if the document was uploaded for this session." }]);
+    }
+    setQuestion("");
+    setAsking(false);
+  };
+
+  const clearHistory = async () => {
+    if (window.confirm("Are you sure you want to clear your chat history?")) {
+      try {
+        await axios.post("http://localhost:4000/clear-history");
+        setChat([]);
+        localStorage.removeItem(CHAT_HISTORY_KEY);
+      } catch (e) {
+        alert("Failed to clear server-side history, but local history cleared.");
+        setChat([]);
+        localStorage.removeItem(CHAT_HISTORY_KEY);
+      }
     }
   };
 
-  // Export chat
-  const exportChat = (type) => {
-    if (!selectedPdf) return;
-    const chat = pdfs.find(pdf => pdf.name === selectedPdf)?.chat || [];
-    if (type === "csv") {
-      const csv = Papa.unparse(chat);
-      const blob = new Blob([csv], { type: "text/csv" });
-      saveAs(blob, `${selectedPdf}-chat.csv`);
-    } else if (type === "pdf") {
-      // Export chat as plain text (real PDF would require jsPDF/pdf-lib)
-      const text = chat.map(msg => `${msg.role}: ${msg.text}`).join("\n\n");
-      const blob = new Blob([text], { type: "text/plain" });
-      saveAs(blob, `${selectedPdf}-chat.txt`);
-    }
-  };
-
-  // -------------------------------
-  // Helpers
-  // -------------------------------
-  const selectedPdfs = pdfs.filter((p) => selectedDocs.includes(p.doc_id));
-  const pageBg = darkMode ? "bg-dark text-light" : "bg-light text-dark";
-  const cardClass = darkMode
-    ? "text-white border-secondary shadow"
-    : "bg-white text-dark border-0 shadow-sm";
-  const inputClass = darkMode ? "text-white border-secondary" : "";
-
-  // -------------------------------
-  // Render
-  // -------------------------------
   return (
-    <div className={pageBg} style={{ minHeight: "100vh" }}>
-      <Navbar bg={darkMode ? "dark" : "primary"} variant="dark">
-        <Container className="d-flex justify-content-between">
-          <Navbar.Brand>🤖 PDF Q&A Bot</Navbar.Brand>
-          <Button variant="outline-light" onClick={() => setDarkMode(!darkMode)}>
-            {darkMode ? "Light" : "Dark"}
+    <Container maxWidth="sm">
+      <AppBar position="static" color="primary" sx={{ mb: 2 }}>
+        <Toolbar>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>PDF Q&A Bot</Typography>
+          <Button
+            color="inherit"
+            onClick={clearHistory}
+            disabled={chat.length === 0}
+            sx={{ mr: 2 }}
+          >
+            Clear History
           </Button>
-        </Container>
-      </Navbar>
+          <Avatar sx={{ bgcolor: "white", color: "primary.main" }}>📄</Avatar>
+        </Toolbar>
+      </AppBar>
 
-      <Container className="mt-4">
-        {/* Upload */}
-        <Card className={`mb-4 ${cardClass}`}>
-          <Card.Body>
-            <Form>
-              <Form.Control
-                type="file"
-                className={inputClass}
-                accept=".pdf,.docx,.txt,.md"
-                onChange={(e) => setFile(e.target.files[0])}
-              />
-              <Button
-                className="mt-2"
-                onClick={uploadDocument}
-                disabled={!file || uploading}
-              >
-                {uploading ? (
-                  <Spinner size="sm" animation="border" />
-                ) : (
-                  "Upload Document"
-                )}
-              </Button>
-            </Form>
-          </Card.Body>
-        </Card>
+      <Paper elevation={3} sx={{ p: 3, mb: 2 }}>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Button
+            variant="contained"
+            component="label"
+            startIcon={<UploadFileIcon />}
+            disabled={uploading}
+          >
+            Select PDF
+            <input
+              type="file"
+              hidden
+              accept=".pdf,.docx,.txt,.md"
+              onChange={handleFileChange}
+            />
+          </Button>
+          <Button variant="outlined" onClick={uploadPDF} disabled={!file || uploading}>
+            {uploading ? <CircularProgress size={24} /> : "Upload"}
+          </Button>
+          {file && <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</Typography>}
+        </Box>
+      </Paper>
 
-        {/* Document selection */}
-        {pdfs.length > 0 && (
-          <Card className={`mb-4 ${cardClass}`}>
-            <Card.Body>
-              <h5>Select Documents</h5>
-              {pdfs.map((pdf) => (
-                <Form.Check
-                  key={pdf.doc_id}
-                  type="checkbox"
-                  label={pdf.name}
-                  checked={selectedDocs.includes(pdf.doc_id)}
-                  onChange={() => toggleDocSelection(pdf.doc_id)}
-                />
-              ))}
-            </Card.Body>
-          </Card>
-        )}
-        {/* Side-by-side comparison when 2 docs selected */}
-        {selectedPdfs.length === 2 && (
-          <>
-            <Card className={`mb-4 ${cardClass}`}>
-              <Card.Body>
-                <Button
-                  variant="info"
-                  onClick={compareDocuments}
-                  disabled={comparing}
-                >
-                  {comparing ? (
-                    <Spinner size="sm" animation="border" />
-                  ) : (
-                    "Generate Comparison"
-                  )}
-                </Button>
-
-                {comparisonResult && (
-                  <div className="mt-4">
-                    <h5>AI Comparison</h5>
-                    <ReactMarkdown>{comparisonResult}</ReactMarkdown>
-                  </div>
-                )}
-              </Card.Body>
-            </Card>
-          </>
-        )}
-
-        {/* Chat */}
-        <Card className={cardClass}>
-          <Card.Body>
-            <div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 16 }}>
-              {chatHistory.map((msg, i) => (
-                <div key={i} className="mb-2">
-                  <strong>{msg.role === "user" ? "You" : "Bot"}:</strong>
-                  <ReactMarkdown>{msg.text}</ReactMarkdown>
-                </div>
-              ))}
-            </div>
-
-        {/* Chat Mode */}
-        {selectedPdfs.length !== 2 && (
-          <Card className={cardClass}>
-            <Card.Body>
-              <h5>Ask Across Selected Documents</h5>
-              <div
-                style={{ maxHeight: 300, overflowY: "auto", marginBottom: 16 }}
-              >
-                {chatHistory.map((msg, i) => (
-                  <div key={i} className="mb-2">
-                    <strong>{msg.role === "user" ? "You" : "Bot"}:</strong>
-                    {msg.role === "bot" && msg.confidence !== undefined && (
-                      <span
-                        className="badge ms-2"
-                        style={{
-                          backgroundColor:
-                            msg.confidence >= 70 ? "#28a745"
-                              : msg.confidence >= 40 ? "#ffc107"
-                                : "#dc3545",
-                          color: msg.confidence >= 40 && msg.confidence < 70 ? "#856404" : "#fff",
-                          fontSize: "0.7rem"
-                        }}
-                      >
-                        Confidence: {msg.confidence}%
-                      </span>
-                    )}
-                    <ReactMarkdown>{msg.text}</ReactMarkdown>
-                  </div>
-                ))}
-              </div>
-
-              <Form
-                className="d-flex gap-2 mb-3"
-                onSubmit={(e) => e.preventDefault()}
-              >
-                <Form.Control
-                  type="text"
-                  placeholder="Ask a question..."
-                  className={inputClass}
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      askQuestion();
-                    }
+      <Paper elevation={3} sx={{ p: 3, mb: 2, minHeight: 300, display: 'flex', flexDirection: 'column' }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="subtitle1">Conversation History</Typography>
+        </Box>
+        <Box sx={{ flexGrow: 1, maxHeight: 400, overflowY: "auto", mb: 2, border: '1px solid #eee', p: 1, borderRadius: 1 }}>
+          {chat.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 5 }}>
+              No messages yet. Upload a PDF and ask a question!
+            </Typography>
+          ) : (
+            chat.map((msg, i) => (
+              <Box key={i} display="flex" justifyContent={msg.role === "user" ? "flex-end" : "flex-start"} mb={1}>
+                <Box
+                  sx={{
+                    bgcolor: msg.role === "user" ? "primary.light" : "grey.200",
+                    color: msg.role === "user" ? "white" : "text.primary",
+                    px: 2,
+                    py: 1,
+                    borderRadius: 2,
+                    maxWidth: "80%"
                   }}
-                />
-                <Button
-                  variant="success"
-                  onClick={askQuestion}
-                  disabled={asking}
                 >
-                  {asking ? <Spinner size="sm" animation="border" /> : "Ask"}
-                </Button>
-              </Form>
-
-              <div className="mt-3">
-                <Button
-                  variant="warning"
-                  className="me-2"
-                  onClick={summarizePDF}
-                  disabled={summarizing}
-                >
-                  {summarizing ? <Spinner size="sm" /> : "Summarize"}
-                </Button>
-
-                <Button
-                  variant="info"
-                  onClick={compareDocuments}
-                  disabled={selectedDocs.length < 2 || comparing}
-                >
-                  {comparing ? <Spinner size="sm" /> : "Compare"}
-                </Button>
-              </div>
-            </Card.Body>
-          </Card>
-        )}
-      </Container>
-    </div>
+                  <Typography variant="body2">
+                    <b>{msg.role === "user" ? "You" : "Bot"}:</b> {msg.text}
+                  </Typography>
+                </Box>
+              </Box>
+            ))
+          )}
+        </Box>
+        <Box display="flex" gap={1}>
+          <TextField
+            fullWidth
+            variant="outlined"
+            size="small"
+            placeholder="Ask a question..."
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            disabled={asking}
+            onKeyDown={e => { if (e.key === "Enter") askQuestion(); }}
+          />
+          <IconButton color="primary" onClick={askQuestion} disabled={asking || !question.trim()}>
+            {asking ? <CircularProgress size={24} /> : <SendIcon />}
+          </IconButton>
+        </Box>
+      </Paper>
+    </Container>
   );
 }
 
