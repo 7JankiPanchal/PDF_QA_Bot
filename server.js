@@ -116,6 +116,19 @@ app.post("/summarize", async (req, res) => {
   }
 });
 
+// Route: Generate Smart Question Suggestions
+app.post("/generate-suggestions", async (req, res) => {
+  try {
+    const response = await axios.post("http://localhost:5000/suggest-questions", {}, {
+      timeout: 10000
+    });
+    res.json({ suggestions: response.data.suggestions || [] });
+  } catch (err) {
+    console.error("Suggestion generation failed:", err.message);
+    res.json({ suggestions: [] }); // Fail gracefully
+  }
+});
+
 // Global error handler for multer errors
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {

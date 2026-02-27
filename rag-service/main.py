@@ -145,5 +145,53 @@ def summarize_pdf(_: SummarizeRequest):
     return {"summary": summary}
 
 
+@app.post("/suggest-questions")
+def suggest_questions():
+    global vectorstore, qa_chain
+    
+    if not qa_chain:
+        return {"suggestions": []}
+    
+    try:
+        # Get representative chunks from different parts of document
+        docs = vectorstore.similarity_search("main topics key concepts summary", k=4)
+        context = "\n\n".join([doc.page_content[:500] for doc in docs])
+        
+        prompt = (
+            "Based on this document excerpt, generate 4 specific, useful questions "
+            "that a reader would want answered. Make them clear and concise.\n\n"
+            f"Document content:\n{context}\n\n"
+            "Generate exactly 4 questions (one per line, no numbering):"
+        )
+        
+        response = generate_response(prompt, max_new_tokens=120)
+        
+        # Parse and clean questions
+        questions = [
+            q.strip().lstrip('0123456789.-) ') 
+            for q in response.split('\n') 
+            if q.strip() and len(q.strip()) > 10
+        ][:4]
+        
+        # Return suggestions or fallback questions
+        if questions:
+            return {"suggestions": questions}
+        else:
+            return {"suggestions": [
+                "What are the main topics covered?",
+                "Can you summarize the key points?",
+                "What are the most important findings?",
+                "What conclusions does this document present?"
+            ]}
+    except Exception as e:
+        print(f"Error generating suggestions: {e}")
+        return {"suggestions": [
+            "What are the main topics covered?",
+            "Can you summarize the key points?",
+            "What are the most important findings?",
+            "What conclusions does this document present?"
+        ]}
+
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)

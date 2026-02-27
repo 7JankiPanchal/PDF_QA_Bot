@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
 import { Document, Page, pdfjs } from "react-pdf";
@@ -27,11 +27,19 @@ function App() {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [summarizing, setSummarizing] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  // Clear suggestions when switching PDFs
+  useEffect(() => {
+    setSuggestions([]);
+  }, [selectedPdf]);
 
   // Multi-PDF upload
   const uploadPDF = async () => {
     if (!file) return;
     setUploading(true);
+    setSuggestions([]); // Clear previous suggestions
     const formData = new FormData();
     formData.append("file", file);
     try {
@@ -40,6 +48,17 @@ function App() {
       setPdfs(prev => [...prev, { name: file.name, url, chat: [] }]);
       setSelectedPdf(file.name);
       alert("PDF uploaded!");
+      
+      // Generate smart suggestions
+      setLoadingSuggestions(true);
+      try {
+        const suggestionsRes = await axios.post(`${API_BASE}/generate-suggestions`);
+        setSuggestions(suggestionsRes.data.suggestions || []);
+      } catch (sugErr) {
+        console.error("Failed to generate suggestions:", sugErr);
+        setSuggestions([]);
+      }
+      setLoadingSuggestions(false);
     } catch (e) {
       const message = e.response?.data?.error || "Upload failed.";
       alert(message);
@@ -184,6 +203,31 @@ function App() {
                     </div>
                   ))}
                 </div>
+                {/* Smart Question Suggestions */}
+                {loadingSuggestions && (
+                  <div className="mb-2 text-center">
+                    <Spinner animation="border" size="sm" className="me-2" />
+                    <span>Generating suggestions...</span>
+                  </div>
+                )}
+                {!loadingSuggestions && suggestions.length > 0 && (
+                  <div className="mb-3">
+                    <small className="text-muted">💡 Suggested questions:</small>
+                    <div className="d-flex flex-wrap gap-2 mt-2">
+                      {suggestions.map((q, idx) => (
+                        <Button
+                          key={idx}
+                          variant="outline-info"
+                          size="sm"
+                          onClick={() => setQuestion(q)}
+                          style={{ textAlign: 'left', whiteSpace: 'normal' }}
+                        >
+                          {q}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <Form className="d-flex gap-2 mb-2">
                   <Form.Control
                     type="text"
